@@ -1,0 +1,31 @@
+There was a request to pull data for customers who purchased BLR. Some of the data is part of the responses to the formation questionnaire, which live inside a json blob in the WH. After a lot of digging, I ended up using three separate queries.
+
+- Regular WH data
+
+select p.servicecode, a.account_uuid, be.business_entity_type as business_type, a.account_email as email, b.w2_other_employees_count as w2_employees, b.created_datetime as business_created
+, '2022-03-23' - b.created_datetime::date as days_since_creation, ot.flow_name as flow, ot.purchase_source
+from public.bi_purchaseitem p
+inner join zb.account a
+on p.accountid = a.account_id
+left join public.bi_business_purpose b
+on p.accountid = b.accountid
+left join zb.business_entity be
+on a.account_uuid = be.account_uuid
+left join zb.order_tracking ot
+on a.account_uuid = ot.uuid
+where p.servicecode = 'business_license_report'
+
+- Limited to 200,000 records for the data inside the json blob
+
+WITH temp AS( select o.account_uuid as account_uuid, o.order_uuid as order_uuid, o.order_data::json as y from zb.orders o),
+temp_order as (select account_uuid, order_uuid, json_array_elements(y) as t FROM temp limit 200000)
+select order_uuid, max(account_uuid::text) as account_uuid, max((t -> 'has employees')::text) as employees, max((t -> 'launch_status')::text) as status
+FROM temp_order
+group by order_uuid
+
+- Use the two previously created tables to produce the requested report
+
+select t1.email, t1.business_type, t1.w2_employees as w2_employees, t2.employees as q_employees, t1.business_created as date_created, t1.days_since_creation, t1.flow, t1.purchase_source, t2.status
+from eva.blroutput1 t1
+join eva.test200k t2
+on t1.account_uuid = t2.account_uuid
